@@ -137,7 +137,7 @@ def fetch_apps_concurrently(app_ids: List[str], fetch_function: Callable[[str], 
                 result = future.result()
                 if result:
                     results.append(result)
-                    if (result % 100 == 0)
+                    if (result % 100 == 0):
                         print(f"Processing Oculus Apps [{len(results)}/{len(app_ids)}] ({len(results)/len(app_ids)*100:2.0f}%)", end="\r")
                     logging.debug(f"Processed app ID: {app_id}")
             except Exception as exc:
