@@ -6,6 +6,7 @@
 # based on code by Ellie https://github.com/basti564
 
 from __future__ import annotations
+import time
 from typing import NamedTuple, List, Optional, Callable
 import json
 import logging
@@ -15,8 +16,11 @@ import re
 import concurrent.futures
 
 logging.basicConfig(level=logging.INFO)
+logging.getLogger("urllib3.connectionpool").setLevel(logging.ERROR)
+logging.getLogger("requests_ratelimiter.requests_ratelimiter").setLevel(logging.WARNING)
 
 session = requests.Session()
+
 from requests.adapters import HTTPAdapter
 adapter = HTTPAdapter(pool_connections=100, pool_maxsize=100)
 session.mount('http://', adapter)
@@ -33,9 +37,10 @@ AppList = List[App]
 # Constants #
 #############
 
-OUTPUT_DIRS = ["data/oculus", "data/sidequest", "data/common"]
+OUTPUT_DIRS = ["data/oculus", "data/oculus_public", "data/sidequest", "data/common"]
 
 OCULUS_TEMPLATE = "data/oculus/{}.json"
+OCULUS_PUBLIC_TEMPLATE = "data/oculus_public/{}.json"
 SIDEQUEST_TEMPLATE = "data/sidequest/{}.json"
 COMMON_TEMPLATE = "data/common/{}.json"
 KNOWN_OCULUS_APPS = "data/known_oculus_apps.json"
@@ -49,13 +54,24 @@ IMAGE_MAPPINGS_OCULUS = {
     "APP_IMG_HERO": "hero",
     "APP_IMG_LOGO_TRANSPARENT": "logo"
 }
+IMAGE_MAPPINGS_OCULUS_PUBLIC = {
+    "cover_landscape_image" : "landscape",
+    "cover_square_image" : "square",
+    "cover_portrait_image" : "portrait",
+    "icon_image" : "icon",
+}
 IMAGE_MAPPINGS_SIDEQUEST = {
     "image_url": "landscape",
     "app_banner": "hero",
 }
 
+OCULUS_SPECIAL_PACKAGE_NAMES = {
+     "1916519981771802" : "com.oculus.browser", # Otherwise returns a null binary
+}
+
 OCULUS_DB_URL = "https://oculusdb.rui2015.me/api/v1/allapps"
 OCULUS_GRAPHQL_URL = "https://graph.oculus.com/graphql"
+META_GRAPHQL_URL = "https://www.meta.com/ocapi/graphql"
 SIDEQUEST_URL = "https://api.sidequestvr.com/search-apps"
 
 OCULUS_SECTION_IDS = ["1888816384764129", "174868819587665"]
@@ -121,7 +137,7 @@ def fetch_apps_concurrently(app_ids: List[str], fetch_function: Callable[[str], 
                 result = future.result()
                 if result:
                     results.append(result)
-                    if (len(results) % 100 == 0):
+                    if (result % 100 == 0)
                         print(f"Processing Oculus Apps [{len(results)}/{len(app_ids)}] ({len(results)/len(app_ids)*100:2.0f}%)", end="\r")
                     logging.debug(f"Processed app ID: {app_id}")
             except Exception as exc:
@@ -137,6 +153,9 @@ def fetch_oculusdb_oculus_app_ids() -> AppList:
     logging.info("Fetching OculusDB apps...")
 
     response = session.get(OCULUS_DB_URL)
+    if response.status_code != 200:
+        return []
+        
     data = response.json()
 
     sidequest_apps = [
@@ -153,45 +172,72 @@ def fetch_oculusdb_oculus_app_ids() -> AppList:
 
     return sidequest_apps
 
-def fetch_oculus_section_items(section_id: str, section_cursor: str = None) -> list:
-    items_payload = {
-        "forced_locale": "en_US",
-        "doc_id": "4743589559102018",
-        "access_token": "OC|1076686279105243|",
-        "variables": json.dumps({
-            "sectionId": section_id,
-            "sortOrder": None,
-            "sectionCursor": section_cursor if section_cursor is not None else "",
-            "sectionItemCount": 500
-        })
+def fetch_oculus_section_items(section_id: str, section_cursor: str = "0", page_num: int= 1) -> list:
+    variables = {
+        "ageRatingFilter":[],
+        "controllerFilter":[],
+        "cursor":section_cursor,
+        "first":128,
+        "interactionModeFilter":[],
+        "languageFilter":[],
+        "playerModeFilter":[],
+        "priceRangeFilter":[],
+        "ratingAboveFilter":0,"saleTypeFilter":[],
+        "sortOrder":[],
+        "topicIdFilter":[],
+        "id":section_id,
+        "__relay_internal__pv__MDCAppStoreShowRatingCountrelayprovider":False
     }
 
-    response = session.post(OCULUS_GRAPHQL_URL, data=items_payload)
-    response_data = response.json()
+    data = {
+        'lsd': 'AVqMsnyvi0U',
+        'variables': json.dumps(variables),
+        'doc_id': '28462698003329119',
+    }
 
+    headers = {'X-FB-LSD': 'AVqMsnyvi0U'}
+    response = session.post(META_GRAPHQL_URL, headers=headers, data=data)
+
+    json_text = response.text.split("}\r\n")[0] + '}'
+    response_data =  json.loads(json_text)
+    
     apps = response_data.get("data", {}).get("node", {}).get("all_items", {}).get("edges", [])
     if not apps:
-        logging.error(f"Failed to fetch Oculus Store apps from {section_id}")
+        logging.error(f"Failed to fetch Oculus Store apps from {section_id} ({section_cursor})")
         return []
     
-    app_ids = [{"id": app["node"]["id"]} for app in apps]
-    
-    section_cursor = response_data.get('data', {}).get('node', {}).get( 'all_items', {}).get('page_info', {}).get('end_cursor', None)
-    if section_cursor is not None:
-        logging.info("Fetching next Oculus Store page...")
-        app_ids.extend(fetch_oculus_section_items(section_id, section_cursor))
+    meta_store_data_by_id = [{app["node"]["id"] : app} for app in apps]
+        
+    page_info = response_data.get('data', {}).get('node', {}).get( 'all_items', {}).get('page_info', {})
 
-    return app_ids
+    if page_info["has_next_page"]:
+        logging.info(f"Fetching next Oculus Store page ({page_num})...")
+        meta_store_data_by_id.extend(fetch_oculus_section_items(section_id, page_info["end_cursor"], page_num=page_num+1))
+
+    return meta_store_data_by_id
 
 
 def fetch_oculus_oculus_app_ids(section_id: str) -> list:
     logging.info(f"Fetching Oculus Store apps for section {OCULUS_SECTION_IDS.index(section_id)}...")
 
-    app_ids = [node['id'] for node in fetch_oculus_section_items(section_id)]      
-    logging.info(f"Fetched {len(app_ids)} apps from Oculus Store from section {OCULUS_SECTION_IDS.index(section_id)}.")
+    rv = fetch_oculus_section_items(section_id)     
+    logging.info(f"Fetched {len(rv)} apps from Oculus Store from section {OCULUS_SECTION_IDS.index(section_id)}.")
 
-    return app_ids 
+    return rv
 
+# Intentionally unused due to rate limit
+def get_oculus_public_json(id:str) -> dict:
+    text = session.get('https://www.meta.com/experiences/{}/'.format(id)).text
+    script_tag_start = text.find('<script type="application/ld+json"')
+    if (script_tag_start == -1):
+        if ("<title>Error</title>" in text):
+            logging.debug(f"Oculus app {id} does not have a store page")
+        else:
+            logging.error(f"Failed to fetch public info for Oculus app {id} (Store page fetched without json data)  ({s} : {f})")
+        return {}
+    script_tag_start = text.find('>', script_tag_start)+1
+    script_tag_end = text.find('</script>', script_tag_start)
+    return json.loads(text[script_tag_start:script_tag_end])
 
 def fetch_and_store_oculus_app_info_by_id(oculus_app_id: str) -> App | None:
     if (oculus_app_id == "1265732843505431"):
@@ -270,32 +316,48 @@ def fetch_and_store_oculus_app_info_by_id(oculus_app_id: str) -> App | None:
             "variables": json.dumps(app_binary_info_variables),
             "access_token": "OC|1317831034909742|"
         }
+
         app_binary_info_response = session.post(OCULUS_GRAPHQL_URL,
                                                 json=app_binary_info_payload)
         app_binary_info_data = app_binary_info_response.json()
-        package_name = app_binary_info_data["data"]["app_binary_info"]["info"][0]["binary"][
-            "package_name"]
+        
+        if oculus_app_id in OCULUS_SPECIAL_PACKAGE_NAMES:
+            package_name = OCULUS_SPECIAL_PACKAGE_NAMES[oculus_app_id]
+        else:
+            package_name = app_binary_info_data["data"]["app_binary_info"]["info"][0]\
+            ["binary"]["package_name"]
     else:
         return
-
+    
+    public_data = oculus_public_info_by_id.get(oculus_app_id, {}).get("node", {})
     dump_json(OCULUS_TEMPLATE.format(package_name), store_format_data)
-    # Common format data
-    if "display_name" not in store_format_data["data"]["node"]:
-        logging.warning(f"")
-        return App(appName=app_name, packageName=package_name, id=oculus_app_id)
-    app_name = store_format_data["data"]["node"]["display_name"]
+    
+    if public_data != {}:
+        dump_json(OCULUS_PUBLIC_TEMPLATE.format(package_name), public_data)
+    
+    app_name = store_format_data["data"]["node"]["display_name"] if "display_name" in store_format_data["data"]["node"] else package_name
+
+    if "display_name" in public_data:
+        app_name = public_data["display_name"]
+
 
     common_format_data = {"name":app_name,
-                          "version":latest_supported_binary['version'],
-                          "versioncode":latest_supported_binary['version_code']}
+                        "version":latest_supported_binary['version'],
+                        "versioncode":latest_supported_binary['version_code']}
+    
+    if "category_name" in public_data:
+        common_format_data["category"] = public_data["category_name"]
+        
+    if "genre_names" in public_data and len(public_data["genre_names"]) > 0:
+        common_format_data["genre"] = public_data["genre_names"][0]
     
     translations = []
     try:
-        translations.extend(store_format_data["data"]["node"]["firstRevision"]["nodes"][0]["pdp_metadata"]["translations"]["nodes"])
-    except:
-        pass    
-    try:
         translations.extend(store_format_data["data"]["node"]["lastRevision"]["nodes"][0]["pdp_metadata"]["translations"]["nodes"])
+    except:
+        pass
+    try:
+        translations.extend(store_format_data["data"]["node"]["firstRevision"]["nodes"][0]["pdp_metadata"]["translations"]["nodes"])
     except:
         pass
     
@@ -308,6 +370,9 @@ def fetch_and_store_oculus_app_info_by_id(oculus_app_id: str) -> App | None:
                 
                 common_format_data[IMAGE_MAPPINGS_OCULUS[image_type]] = image["uri"]
 
+    for k, v in IMAGE_MAPPINGS_OCULUS_PUBLIC.items():
+        if k in public_data:
+            common_format_data[v] = public_data[k]["uri"]
                     
     logging.debug(f"Finished {package_name}")
     dump_json(COMMON_TEMPLATE.format(package_name), common_format_data)
@@ -370,8 +435,8 @@ def fetch_and_store_sidequest(sidequest_data = fetch_sidequest_basic_data()) -> 
         package_name = app["packagename"]
         
         dump_json(SIDEQUEST_TEMPLATE.format(package_name), app)
-
-        if package_name.startswith("com.autogen.") and app["is_labrador"] and app["labrador_url"].startswith(
+        
+        if package_name.startswith("com.autogen.") and "labrador_url" in app and app["labrador_url"].startswith(
                 "https://www.oculus.com/experiences/quest/"):
             labrador_url = app["labrador_url"]
             oculus_app_id = re.search(r'/quest/(\d+)', labrador_url).group(1)
@@ -394,37 +459,44 @@ def fetch_and_store_sidequest(sidequest_data = fetch_sidequest_basic_data()) -> 
 ########
 
 if __name__ == "__main__":
+    global oculus_public_info_by_id
+      
     for dir in OUTPUT_DIRS:
         os.makedirs(dir, exist_ok=True)
 
     with concurrent.futures.ThreadPoolExecutor() as executor:
-        futures_oculus = [executor.submit(fetch_oculus_oculus_app_ids, section) for section in OCULUS_SECTION_IDS]
         
         future_oculusdb = executor.submit(fetch_oculusdb_oculus_app_ids)
         future_sidequest = executor.submit(fetch_and_store_sidequest)
-        
-        oculus_sectional_ids = [future_oculus.result() for future_oculus in futures_oculus]
-        
+                
         oculusdb_apps = future_oculusdb.result()
         sidequest_result = future_sidequest.result()
         
-    oculus_ids = []
-    for sectional_ids in oculus_sectional_ids:
-        oculus_ids.extend(sectional_ids)
+    oculus_public_info:list = []
+    oculus_sectional_public_info = [fetch_oculus_oculus_app_ids(section) for section in OCULUS_SECTION_IDS]
+    for section_public_info in oculus_sectional_public_info:
+        oculus_public_info.extend(section_public_info)
+
     
+    oculus_public_info_by_id = {}
+    for entry in oculus_public_info:
+        oculus_public_info_by_id.update(entry)
+
+    logging.info("Loading known app list...")
     existing_oculus_apps = load_applist(KNOWN_OCULUS_APPS)
 
     all_app_ids = merge_app_ids(sidequest_result.oculus_app_ids,
                                 [app.id for app in existing_oculus_apps],
                                 [app.id for app in oculusdb_apps],
-                                oculus_ids)
+                                oculus_public_info_by_id.keys())
 
+    logging.info("Fetching apps concurrently...")
     new_oculus_apps = fetch_apps_concurrently(all_app_ids, fetch_and_store_oculus_app_info_by_id)
     merged_oculus_apps = merge_apps(existing_oculus_apps, new_oculus_apps)
-    
     dump_applist(KNOWN_OCULUS_APPS, merged_oculus_apps)
     
     # Merge sidequest
+    logging.info("Handling sidequest data...")
     existing_sidequest_apps = load_applist(KNOWN_SIDEQUEST_APPS)
     merged_sidequest_apps = merge_apps(existing_sidequest_apps, sidequest_result.sidequest_apps)
     dump_applist(KNOWN_SIDEQUEST_APPS, merged_sidequest_apps)

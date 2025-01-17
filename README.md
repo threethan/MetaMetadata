@@ -3,13 +3,14 @@ Contains metadata for all Meta Quest Store and SideQuest apps.
 
 Includes names, banners, and icons which may be useful to app launchers.
 
-Updated daily.
+Updates daily.
 
-*Special thanks [Ellie](https://github.com/basti564/) for the original icon scraper*
+*Special thanks to [Ellie](https://github.com/basti564/) for the original icon scraper*
 
 ## Data Formats
-- `data/oculus` contains raw data for all Meta Quest Store apps in their proprietary format
-- `data/sidequest` contains raw data for all SideQuest apps in their proprietary format, *including sidequest listings for Meta Quest Store apps*
+- `data/oculus` contains raw data for all Meta Quest Store apps
+- `data/oculus_public` contains public Meta Quest Store data, as recieved by the browser
+- `data/sidequest` contains raw data for all SideQuest apps, *including sidequest listings for Meta Quest Store apps*
 - `data/common` contains basic data for all apps in a **common format**
 
 ## Common Format
@@ -26,8 +27,10 @@ Updated daily.
 **\*** *= Only available for Meta Quest Store apps*
 
 > [!NOTE]
-> Images from SideQuest may have any resolution or ratio,
-> given dimensions are for Meta Quest Store apps only.
+> Images from SideQuest may have any resolution or ratio, given dimensions are for Meta Quest Store apps only.
+
+> [!NOTE]
+> Hero and logo images are fetched differently from other icons and may be use internal images for some apps.
 
 ### Example Meta Quest Store App
 ```json
