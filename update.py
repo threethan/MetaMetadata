@@ -67,6 +67,7 @@ IMAGE_MAPPINGS_SIDEQUEST = {
 
 OCULUS_SPECIAL_PACKAGE_NAMES = {
      "1916519981771802" : "com.oculus.browser", # Otherwise returns a null binary
+     "8026465470786014" : "com.oculus.hzosgallery", # Otherwise returns a null binary
 }
 
 OCULUS_DB_URL = "https://oculusdb.rui2015.me/api/v1/allapps"
