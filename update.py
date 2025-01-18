@@ -351,7 +351,7 @@ def fetch_and_store_oculus_app_info_by_id(oculus_app_id: str) -> App | None:
         
     if "genre_names" in public_data and len(public_data["genre_names"]) > 0:
         common_format_data["genre"] = public_data["genre_names"][0]
-        common_format_data["genres"] = public_data["genre_names"]
+        common_format_data["genres"] = ",".join(public_data["genre_names"])
     
     translations = []
     try:
