@@ -153,13 +153,21 @@ def fetch_apps_concurrently(app_ids: List[str], fetch_function: Callable[[str], 
 def fetch_oculusdb_oculus_app_ids() -> AppList:
     logging.info("Fetching OculusDB apps...")
 
-    response = session.get(OCULUS_DB_URL)
-    if response.status_code != 200:
+    data = None
+    for i in range(5):
+        try:
+            response = requests.get(OCULUS_DB_URL)
+            data = response.json()
+            break
+        except Exception as e:
+            logging.warning(f"Failed to fetch data from OculusDB (Attempt {i+1}): {e}")
+            time.sleep(5)
+    if data is None:
+        logging.error(f"Failed to fetch data from OculusDB. All attempts failed.")
         return []
-        
-    data = response.json()
 
-    sidequest_apps = [
+
+    odb_apps = [
         App(
             appName=app.get("appName", ""),
             packageName=app.get("packageName", ""),
@@ -169,9 +177,9 @@ def fetch_oculusdb_oculus_app_ids() -> AppList:
         if app.get("packageName") and "rift" not in app.get("packageName")
     ]
 
-    logging.info(f"Fetched {len(sidequest_apps)} apps from OculusDB.")
+    logging.info(f"Fetched {len(odb_apps)} apps from OculusDB.")
 
-    return sidequest_apps
+    return odb_apps
 
 def fetch_oculus_section_items(section_id: str, section_cursor: str = "0", page_num: int= 1) -> list:
     variables = {
