@@ -5,12 +5,13 @@ Includes names, banners, and icons which may be useful to app launchers.
 
 Updates daily.
 
-*Special thanks to [Ellie](https://github.com/basti564/) for the original icon scraper*
+*Special thanks to [Ellie](https://github.com/basti564/) for the original icon scraper, and to [OculusDB](https://oculusdb.rui2015.me/) for some data.*
 
 ## Data Formats
 - `data/oculus` contains raw data for all Meta Quest Store apps
 - `data/oculus_public` contains public Meta Quest Store data, as recieved by the browser
 - `data/sidequest` contains raw data for all SideQuest apps, *including sidequest listings for Meta Quest Store apps*
+  `data/oculusdb` contains raw data for all apps on OculusDB, essentially mirroring their public API
 - `data/common` contains basic data for all apps in a **common format**
 
 ## Common Format
