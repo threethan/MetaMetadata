@@ -37,11 +37,12 @@ AppList = List[App]
 # Constants #
 #############
 
-OUTPUT_DIRS = ["data/oculus", "data/oculus_public", "data/sidequest", "data/common"]
+OUTPUT_DIRS = ["data/oculus", "data/oculus_public", "data/sidequest", "data/oculusdb", "data/common"]
 
 OCULUS_TEMPLATE = "data/oculus/{}.json"
 OCULUS_PUBLIC_TEMPLATE = "data/oculus_public/{}.json"
 SIDEQUEST_TEMPLATE = "data/sidequest/{}.json"
+OCULUSDB_TEMPLATE = "data/oculusdb/{}.json"
 COMMON_TEMPLATE = "data/common/{}.json"
 KNOWN_OCULUS_APPS = "data/known_oculus_apps.json"
 KNOWN_SIDEQUEST_APPS = "data/known_sidequest_apps.json"
@@ -176,6 +177,11 @@ def fetch_oculusdb_oculus_app_ids() -> AppList:
         for app in data
         if app.get("packageName") and "rift" not in app.get("packageName")
     ]
+
+    # Save mirror of odb_data; can be used in case of outages
+    for app in data:
+        if app.get("packageName"):
+            dump_json(OCULUSDB_TEMPLATE.format(app.get("packageName")), app)
 
     logging.info(f"Fetched {len(odb_apps)} apps from OculusDB.")
 
