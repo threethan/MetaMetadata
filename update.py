@@ -242,7 +242,20 @@ def fetch_oculus_oculus_app_ids(section_id: str) -> list:
 
 # Intentionally unused due to rate limit
 def get_oculus_public_json(id:str) -> dict:
-    text = session.get('https://www.meta.com/experiences/{}/'.format(id)).text
+
+    text = None
+    for i in range(5):
+        try:
+            text = session.get('https://www.meta.com/experiences/{}/'.format(id)).text
+            data = response.json()
+            break
+        except Exception as e:
+            logging.warning(f"Failed to fetch data from SideQuest page (Attempt {i+1}): {e}")
+            time.sleep(5)
+    if text is None:
+        logging.error(f"Failed to fetch data for Oculus public app with id {id}. All attempts failed.")
+        return {}
+    
     script_tag_start = text.find('<script type="application/ld+json"')
     if (script_tag_start == -1):
         if ("<title>Error</title>" in text):
@@ -426,10 +439,19 @@ def fetch_sidequest_basic_data():
             "download_filter": "all",
         }
 
-        response = session.get(SIDEQUEST_URL, params=params, headers=headers)
-        data = response.json()
+        data = None
+        for i in range(5):
+            try:
+                response = session.get(SIDEQUEST_URL, params=params, headers=headers)
+                data = response.json()
+                break
+            except Exception as e:
+                logging.warning(f"Failed to fetch data from SideQuest page (Attempt {i+1}): {e}")
+                time.sleep(5)
+        if data is None:
+            logging.error(f"Failed to fetch data from SideQuest page. All attempts failed.")
 
-        if not data["data"]:
+        if data is None or not data["data"]:
             break
 
         app_data_list.extend(data["data"])
