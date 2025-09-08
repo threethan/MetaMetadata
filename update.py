@@ -211,11 +211,21 @@ def fetch_oculus_section_items(section_id: str, section_cursor: str = "0", page_
     }
 
     headers = {'X-FB-LSD': 'AVqMsnyvi0U'}
-    response = session.post(META_GRAPHQL_URL, headers=headers, data=data)
 
-    json_text = response.text.split("}\r\n")[0] + '}'
-    response_data =  json.loads(json_text)
-    
+    response_data = None
+    for i in range(5):
+        try:
+            response = session.post(META_GRAPHQL_URL, headers=headers, data=data)
+            json_text = response.text.split("}\r\n")[0] + '}'
+            response_data =  json.loads(json_text)
+            break
+        except Exception as e:
+            logging.warning(f"Failed to fetch data from Oculus section (Attempt {i+1}): {e}")
+            time.sleep(5)
+    if response_data is None:
+        logging.error(f"Failed to fetch data from Oculus section. All attempts failed.")
+        return []
+        
     apps = response_data.get("data", {}).get("node", {}).get("all_items", {}).get("edges", [])
     if not apps:
         logging.error(f"Failed to fetch Oculus Store apps from {section_id} ({section_cursor})")
@@ -278,8 +288,19 @@ def fetch_and_store_oculus_app_info_by_id(oculus_app_id: str) -> App | None:
         "access_token": "OC|1076686279105243|",
         "variables": json.dumps(store_stuff_variables)
     }
-    store_stuff_response = session.post(OCULUS_GRAPHQL_URL, data=store_stuff_payload)
-    store_format_data = store_stuff_response.json()
+
+    store_format_data = None
+    for i in range(5):
+        try:
+            store_stuff_response = session.post(OCULUS_GRAPHQL_URL, data=store_stuff_payload)
+            store_format_data = store_stuff_response.json()
+            break
+        except Exception as e:
+            logging.warning(f"Failed to fetch data store format data (Attempt {i+1}): {e}")
+            time.sleep(5)
+    if store_format_data is None:
+        logging.error(f"Failed to fetch store format data from for oculus id {id}. All attempts failed.")
+    
     if store_format_data["data"]["node"] == None:
         logging.debug(f"{oculus_app_id} returned invalid, empty data")
         return None
@@ -294,10 +315,19 @@ def fetch_and_store_oculus_app_info_by_id(oculus_app_id: str) -> App | None:
         "variables": json.dumps(app_details_variables)
     }
 
-    app_details_response = session.post(OCULUS_GRAPHQL_URL,
-                                        data=app_details_payload)
-    app_details_data = app_details_response.json()
-    
+    for i in range(5):
+        try:
+            app_details_response = session.post(OCULUS_GRAPHQL_URL,
+                                                data=app_details_payload)
+            app_details_data = app_details_response.json()
+            break
+        except Exception as e:
+            logging.warning(f"Failed to fetch app details data (Attempt {i+1}): {e}")
+            time.sleep(5)
+    if app_details_response is None:
+        logging.error(f"Failed to fetch  app details data from for oculus id {id}. All attempts failed.")
+        return
+        
     latest_supported_binary = app_details_data["data"]["node"][
         "release_channels"
     ]["nodes"][0]["latest_supported_binary"]
@@ -345,9 +375,18 @@ def fetch_and_store_oculus_app_info_by_id(oculus_app_id: str) -> App | None:
             "access_token": "OC|1317831034909742|"
         }
 
-        app_binary_info_response = session.post(OCULUS_GRAPHQL_URL,
-                                                json=app_binary_info_payload)
-        app_binary_info_data = app_binary_info_response.json()
+        app_binary_info_data = None
+        for i in range(5):
+            try:
+                store_stuff_response = session.post(OCULUS_GRAPHQL_URL, data=store_stuff_payload)
+                store_format_data = store_stuff_response.json()
+                break
+            except Exception as e:
+                logging.warning(f"Failed to fetch data store format data (Attempt {i+1}): {e}")
+                time.sleep(5)
+        if app_binary_info_data is None:
+            logging.error(f"Failed to fetch store format data from for oculus id {id}. All attempts failed.")
+            return
         
         if oculus_app_id in OCULUS_SPECIAL_PACKAGE_NAMES:
             package_name = OCULUS_SPECIAL_PACKAGE_NAMES[oculus_app_id]
