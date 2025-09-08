@@ -299,7 +299,7 @@ def fetch_and_store_oculus_app_info_by_id(oculus_app_id: str) -> App | None:
             logging.warning(f"Failed to fetch data store format data (Attempt {i+1}): {e}")
             time.sleep(5)
     if store_format_data is None:
-        logging.error(f"Failed to fetch store format data from for oculus id {id}. All attempts failed.")
+        logging.error(f"Failed to fetch store format data from for oculus id {oculus_app_id}. All attempts failed.")
     
     if store_format_data["data"]["node"] == None:
         logging.debug(f"{oculus_app_id} returned invalid, empty data")
@@ -325,7 +325,7 @@ def fetch_and_store_oculus_app_info_by_id(oculus_app_id: str) -> App | None:
             logging.warning(f"Failed to fetch app details data (Attempt {i+1}): {e}")
             time.sleep(5)
     if app_details_response is None:
-        logging.error(f"Failed to fetch  app details data from for oculus id {id}. All attempts failed.")
+        logging.error(f"Failed to fetch  app details data from for oculus id {oculus_app_id}. All attempts failed.")
         return
         
     latest_supported_binary = app_details_data["data"]["node"][
@@ -378,14 +378,15 @@ def fetch_and_store_oculus_app_info_by_id(oculus_app_id: str) -> App | None:
         app_binary_info_data = None
         for i in range(5):
             try:
-                store_stuff_response = session.post(OCULUS_GRAPHQL_URL, data=store_stuff_payload)
-                store_format_data = store_stuff_response.json()
+                app_binary_info_response = session.post(OCULUS_GRAPHQL_URL,
+                                                        json=app_binary_info_payload)
+                app_binary_info_data = app_binary_info_response.json()
                 break
             except Exception as e:
-                logging.warning(f"Failed to fetch data store format data (Attempt {i+1}): {e}")
+                logging.warning(f"Failed to fetch data app binary info data (Attempt {i+1}): {e}")
                 time.sleep(5)
         if app_binary_info_data is None:
-            logging.error(f"Failed to fetch store format data from for oculus id {id}. All attempts failed.")
+            logging.error(f"Failed to fetch app binary info data from for oculus id {oculus_app_id}. All attempts failed.")
             return
         
         if oculus_app_id in OCULUS_SPECIAL_PACKAGE_NAMES:
