@@ -76,7 +76,9 @@ OCULUS_GRAPHQL_URL = "https://graph.oculus.com/graphql"
 META_GRAPHQL_URL = "https://www.meta.com/ocapi/graphql"
 SIDEQUEST_URL = "https://api.sidequestvr.com/search-apps"
 
-OCULUS_SECTION_IDS = ["1888816384764129", "174868819587665"]
+OCULUS_SECTION_IDS = ["1888816384764129", "174868819587665", 
+                      "967735875395912", # Games
+                      "391914765228253", "3955297897903802"] # Apps
 
 ############
 # FILE OPS #
@@ -192,13 +194,13 @@ def fetch_oculus_section_items(section_id: str, section_cursor: str = "0", page_
         "ageRatingFilter":[],
         "controllerFilter":[],
         "cursor":section_cursor,
-        "first":128,
+        "first":100, # Actual max appears to be 100 
         "interactionModeFilter":[],
         "languageFilter":[],
         "playerModeFilter":[],
         "priceRangeFilter":[],
-        "ratingAboveFilter":0,"saleTypeFilter":[],
-        "sortOrder":[],
+        "ratingAboveFilter":0, "saleTypeFilter":[],
+        "sortOrder":"release_date", # Fetch newest first, as we seem limited at 1000 items
         "topicIdFilter":[],
         "id":section_id,
         "__relay_internal__pv__MDCAppStoreShowRatingCountrelayprovider":False
@@ -236,14 +238,14 @@ def fetch_oculus_section_items(section_id: str, section_cursor: str = "0", page_
     page_info = response_data.get('data', {}).get('node', {}).get( 'all_items', {}).get('page_info', {})
 
     if page_info["has_next_page"]:
-        logging.info(f"Fetching next Oculus Store page ({page_num})...")
+        logging.info(f"Fetching next Oculus Store page ({page_num} from section {OCULUS_SECTION_IDS.index(section_id)})...")
         meta_store_data_by_id.extend(fetch_oculus_section_items(section_id, page_info["end_cursor"], page_num=page_num+1))
 
     return meta_store_data_by_id
 
 
 def fetch_oculus_oculus_app_ids(section_id: str) -> list:
-    logging.info(f"Fetching Oculus Store apps for section {OCULUS_SECTION_IDS.index(section_id)}...")
+    logging.info(f"Fetching Oculus Store apps for section {OCULUS_SECTION_IDS.index(section_id)} ({section_id})...")
 
     rv = fetch_oculus_section_items(section_id)     
     logging.info(f"Fetched {len(rv)} apps from Oculus Store from section {OCULUS_SECTION_IDS.index(section_id)}.")
@@ -257,7 +259,6 @@ def get_oculus_public_json(id:str) -> dict:
     for i in range(5):
         try:
             text = session.get('https://www.meta.com/experiences/{}/'.format(id)).text
-            data = response.json()
             break
         except Exception as e:
             logging.warning(f"Failed to fetch data from SideQuest page (Attempt {i+1}): {e}")
@@ -550,16 +551,26 @@ if __name__ == "__main__":
         oculusdb_apps = future_oculusdb.result()
         sidequest_result = future_sidequest.result()
         
-    oculus_public_info:list = []
-    oculus_sectional_public_info = [fetch_oculus_oculus_app_ids(section) for section in OCULUS_SECTION_IDS]
-    for section_public_info in oculus_sectional_public_info:
-        oculus_public_info.extend(section_public_info)
+    oculus_public_info: list = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(OCULUS_SECTION_IDS))) as executor:
+        future_to_section = {
+            executor.submit(fetch_oculus_oculus_app_ids, section): section
+            for section in OCULUS_SECTION_IDS
+        }
+        for future in concurrent.futures.as_completed(future_to_section):
+            section = future_to_section[future]
+            try:
+                section_public_info = future.result() or []
+                oculus_public_info.extend(section_public_info)
+                logging.debug(f"Fetched section {OCULUS_SECTION_IDS.index(section)} with {len(section_public_info)} items")
+            except Exception as exc:
+                logging.warning(f"Oculus section {section} merge generated an exception: {exc}")
 
     
     oculus_public_info_by_id = {}
     for entry in oculus_public_info:
         oculus_public_info_by_id.update(entry)
-
+    
     logging.info("Loading known app list...")
     existing_oculus_apps = load_applist(KNOWN_OCULUS_APPS)
 
