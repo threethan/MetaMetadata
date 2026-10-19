@@ -19,6 +19,9 @@ logging.basicConfig(level=logging.INFO)
 logging.getLogger("urllib3.connectionpool").setLevel(logging.ERROR)
 logging.getLogger("requests_ratelimiter.requests_ratelimiter").setLevel(logging.WARNING)
 
+# Bound network waits so a stalled upstream cannot stop the updater forever.
+REQUEST_TIMEOUT = (10, 30)
+
 session = requests.Session()
 
 from requests.adapters import HTTPAdapter
@@ -159,7 +162,8 @@ def fetch_oculusdb_oculus_app_ids() -> AppList:
     data = None
     for i in range(5):
         try:
-            response = requests.get(OCULUS_DB_URL)
+            response = requests.get(OCULUS_DB_URL, timeout=REQUEST_TIMEOUT)
+            response.raise_for_status()
             data = response.json()
             break
         except Exception as e:
@@ -217,7 +221,8 @@ def fetch_oculus_section_items(section_id: str, section_cursor: str = "0", page_
     response_data = None
     for i in range(5):
         try:
-            response = session.post(META_GRAPHQL_URL, headers=headers, data=data)
+            response = session.post(META_GRAPHQL_URL, headers=headers, data=data, timeout=REQUEST_TIMEOUT)
+            response.raise_for_status()
             json_text = response.text.split("}\r\n")[0] + '}'
             response_data =  json.loads(json_text)
             break
@@ -258,7 +263,9 @@ def get_oculus_public_json(id:str) -> dict:
     text = None
     for i in range(5):
         try:
-            text = session.get('https://www.meta.com/experiences/{}/'.format(id)).text
+            response = session.get('https://www.meta.com/experiences/{}/'.format(id), timeout=REQUEST_TIMEOUT)
+            response.raise_for_status()
+            text = response.text
             break
         except Exception as e:
             logging.warning(f"Failed to fetch data from SideQuest page (Attempt {i+1}): {e}")
@@ -293,7 +300,8 @@ def fetch_and_store_oculus_app_info_by_id(oculus_app_id: str) -> App | None:
     store_format_data = None
     for i in range(5):
         try:
-            store_stuff_response = session.post(OCULUS_GRAPHQL_URL, data=store_stuff_payload)
+            store_stuff_response = session.post(OCULUS_GRAPHQL_URL, data=store_stuff_payload, timeout=REQUEST_TIMEOUT)
+            store_stuff_response.raise_for_status()
             store_format_data = store_stuff_response.json()
             break
         except Exception as e:
@@ -301,8 +309,9 @@ def fetch_and_store_oculus_app_info_by_id(oculus_app_id: str) -> App | None:
             time.sleep(5)
     if store_format_data is None:
         logging.error(f"Failed to fetch store format data from for oculus id {oculus_app_id}. All attempts failed.")
-    
-    if store_format_data["data"]["node"] == None:
+
+    store_node = (store_format_data or {}).get("data", {}).get("node")
+    if store_node is None:
         logging.debug(f"{oculus_app_id} returned invalid, empty data")
         return None
     
@@ -316,22 +325,28 @@ def fetch_and_store_oculus_app_info_by_id(oculus_app_id: str) -> App | None:
         "variables": json.dumps(app_details_variables)
     }
 
+    app_details_data = None
     for i in range(5):
         try:
             app_details_response = session.post(OCULUS_GRAPHQL_URL,
-                                                data=app_details_payload)
+                                                data=app_details_payload,
+                                                timeout=REQUEST_TIMEOUT)
+            app_details_response.raise_for_status()
             app_details_data = app_details_response.json()
             break
         except Exception as e:
             logging.warning(f"Failed to fetch app details data (Attempt {i+1}): {e}")
             time.sleep(5)
-    if app_details_response is None:
+    if app_details_data is None:
         logging.error(f"Failed to fetch  app details data from for oculus id {oculus_app_id}. All attempts failed.")
         return
-        
-    latest_supported_binary = app_details_data["data"]["node"][
-        "release_channels"
-    ]["nodes"][0]["latest_supported_binary"]
+
+    app_details_node = (app_details_data or {}).get("data", {}).get("node")
+    release_channels = (app_details_node or {}).get("release_channels", {}).get("nodes", [])
+    if not release_channels:
+        logging.debug(f"{oculus_app_id} returned no release channels")
+        return None
+    latest_supported_binary = release_channels[0].get("latest_supported_binary")
         
     if latest_supported_binary is not None:
         app_binary_info_variables = {
@@ -380,7 +395,9 @@ def fetch_and_store_oculus_app_info_by_id(oculus_app_id: str) -> App | None:
         for i in range(5):
             try:
                 app_binary_info_response = session.post(OCULUS_GRAPHQL_URL,
-                                                        json=app_binary_info_payload)
+                                                        json=app_binary_info_payload,
+                                                        timeout=REQUEST_TIMEOUT)
+                app_binary_info_response.raise_for_status()
                 app_binary_info_data = app_binary_info_response.json()
                 break
             except Exception as e:
@@ -393,8 +410,12 @@ def fetch_and_store_oculus_app_info_by_id(oculus_app_id: str) -> App | None:
         if oculus_app_id in OCULUS_SPECIAL_PACKAGE_NAMES:
             package_name = OCULUS_SPECIAL_PACKAGE_NAMES[oculus_app_id]
         else:
-            package_name = app_binary_info_data["data"]["app_binary_info"]["info"][0]\
-            ["binary"]["package_name"]
+            binary_info = (app_binary_info_data or {}).get("data", {}).get("app_binary_info", {}).get("info", [])
+            binary = binary_info[0].get("binary") if binary_info else None
+            package_name = (binary or {}).get("package_name")
+            if not package_name:
+                logging.debug(f"{oculus_app_id} returned no Android package binary")
+                return None
     else:
         return
     
@@ -483,7 +504,8 @@ def fetch_sidequest_basic_data():
         data = None
         for i in range(5):
             try:
-                response = session.get(SIDEQUEST_URL, params=params, headers=headers)
+                response = session.get(SIDEQUEST_URL, params=params, headers=headers, timeout=REQUEST_TIMEOUT)
+                response.raise_for_status()
                 data = response.json()
                 break
             except Exception as e:
@@ -505,7 +527,10 @@ class SideQuestResult(NamedTuple):
     sidequest_apps: AppList
     oculus_app_ids: list
     
-def fetch_and_store_sidequest(sidequest_data = fetch_sidequest_basic_data()) -> SideQuestResult:
+def fetch_and_store_sidequest(sidequest_data = None) -> SideQuestResult:
+    if sidequest_data is None:
+        sidequest_data = fetch_sidequest_basic_data()
+
     sidequest_apps : AppList = []
     oculus_apps_ids = []
     for app in sidequest_data:
@@ -515,9 +540,10 @@ def fetch_and_store_sidequest(sidequest_data = fetch_sidequest_basic_data()) -> 
         
         dump_json(SIDEQUEST_TEMPLATE.format(package_name), app)
         
-        if package_name.startswith("com.autogen.") and "labrador_url" in app and app["labrador_url"].startswith(
-                "https://www.oculus.com/experiences/quest/"):
-            labrador_url = app["labrador_url"]
+        labrador_url = app.get("labrador_url")
+        if (package_name.startswith("com.autogen.")
+                and isinstance(labrador_url, str)
+                and labrador_url.startswith("https://www.oculus.com/experiences/quest/")):
             oculus_app_id = re.search(r'/quest/(\d+)', labrador_url).group(1)
             oculus_apps_ids.append(oculus_app_id)
         else:
